@@ -1,10 +1,13 @@
 use anyhow::Error;
+use itertools::Itertools;
 use zune_image::codecs::qoi::zune_core::options::DecoderOptions;
 mod conversions;
 pub use conversions::*;
 
 const ASCII_SIZE: usize = 8;
-const DEFAULT_TEXTURE: &str = " .,:-=*#@░";
+const DEFAULT_TEXTURE: &str = " .,:-=*#@";
+pub const UNICODE_TEXTURE: &str = " ░▒▓█";
+pub const MIXED_TEXTURE: &str = " .-=*#@░▒▓█";
 
 pub struct ImageRepr {
     pub image: zune_image::image::Image,
@@ -33,7 +36,7 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(buffer: &[u8], ascii_pixel_size: Option<usize>) -> anyhow::Result<Self> {
+    pub fn new(buffer: &[u8], resize_width: Option<usize>) -> anyhow::Result<Self> {
         let decode_options = DecoderOptions::default();
 
         let image = zune_image::image::Image::read(buffer, decode_options).unwrap();
@@ -46,36 +49,51 @@ impl AppState {
                 image,
                 dimensions: ImgDimensions { width, height },
             },
-            ascii_size: ascii_pixel_size.unwrap_or(ASCII_SIZE),
+            ascii_size: ASCII_SIZE,
             resized_image: None,
             texture: DEFAULT_TEXTURE.to_owned(),
         };
 
-        state.resize()?;
+        let aspect_ratio = width / height;
+
+        let resize_dimensions = resize_width.and_then(|w| {
+            Some(ImgDimensions {
+                width: w,
+                height: w / aspect_ratio,
+            })
+        });
+        state.resize(resize_dimensions)?;
 
         Ok(state)
+    }
+
+    pub fn set_pixel_size(&mut self, ascii_pixel_size: usize) {
+        self.ascii_size = ascii_pixel_size;
     }
 
     pub fn set_texture(&mut self, texture: &str) {
         self.texture = texture.to_owned()
     }
 
-    fn resize(&mut self) -> anyhow::Result<()> {
-        let ImgDimensions { width, height } = self.og_image.dimensions;
-        let (term_width, term_height) =
-            term_size::dimensions().ok_or(Error::msg("failed to get term dimentions"))?;
-        let (resized_width, resized_height) = if width > height {
-            let new_width = term_width - ASCII_SIZE;
-            let new_height = (new_width * height) / width;
+    fn resize(&mut self, dimensions: Option<ImgDimensions>) -> anyhow::Result<()> {
+        let og_dims = &self.og_image.dimensions;
+        let out_dims = dimensions.or_else(|| {
+            term_size::dimensions().map(|d| ImgDimensions {
+                width: d.0,
+                height: d.1,
+            })
+        });
+        let out_dims = out_dims.ok_or(Error::msg("failed to get term dimentions"))?;
+        let (resized_width, resized_height) = if og_dims.width > og_dims.height {
+            let new_width = out_dims.width - ASCII_SIZE;
+            let new_height = (new_width * og_dims.height) / og_dims.width;
             (new_width, new_height)
         } else {
-            let new_height = term_height - ASCII_SIZE;
-            let new_width = (new_height * width) / height;
+            let new_height = out_dims.height - ASCII_SIZE;
+            let new_width = (new_height * og_dims.width) / og_dims.height;
             (new_width, new_height)
         };
         let resized = resize_image(&self.og_image.image, resized_width, resized_height);
-        // might not need it
-        let (width, height) = resized.dimensions();
 
         self.resized_image = Some(ImageRepr {
             image: resized,
@@ -107,56 +125,37 @@ impl AppState {
         }
     }
 
-    fn to_luma(&self) -> anyhow::Result<Vec<f32>> {
+    fn quantized_level(&self, value: u8) -> u32 {
+        // distance between each bins (in our case 255 / 8  will give us 8 bins or 8 quantized levels)
+        // 255 - max luma value, 0 - min
+        let distance_bw_levels = (255 - 0) / self.texture.chars().count() as u32;
+        // divide the value with quatized level to bring it to one of the 8 value range
+        let value = value as u32 / distance_bw_levels;
+        // for indexing it to 0
+        value.saturating_sub(1)
+    }
+
+    fn to_luma(&self) -> anyhow::Result<Vec<u8>> {
         let (r, g, b) = self.resized_rgb_channels()?;
         Ok(itertools::izip!(r, g, b)
             // convert rgb to luma
             .map(|(r, g, b)| (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) as u8)
-            // convert luma 0-255 u8 values to 0-1 f32
-            .map(|l| l as f32 / 255.0)
-            // convert 0-1 infinite range value to 10 value ( .0, .1, .2, .3, .4, .5, .6, .7, .8, .9 )
-            .map(|fl| (fl * 10.0).floor() / 10.0)
             .collect::<Vec<_>>())
     }
 
     pub fn apply_texture(&self) -> anyhow::Result<String> {
         let luma = self.to_luma()?;
-        let mut textured_img = String::new();
-        let texture = self.texture.chars().collect::<Vec<_>>();
-        for (idx, luma) in luma.iter().enumerate() {
-            push_texture(&mut textured_img, *luma, &texture)?;
-            if (idx + 1)
-                % self
-                    .resized_image
-                    .as_ref()
-                    .ok_or(Error::msg("resize image first"))?
-                    .dimensions
-                    .width
-                == 0
-            {
-                textured_img.push('\n');
-            }
-        }
-        Ok(textured_img)
+        let mapped_texture = self.texture.chars().collect::<Vec<_>>();
+        let l = luma
+            .iter()
+            .map(|&l| {
+                mapped_texture
+                    .get(self.quantized_level(l) as usize)
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        Ok(l.chunks(self.resized_image.as_ref().unwrap().width())
+            .map(|cs| cs.iter().join(""))
+            .join("\n"))
     }
-}
-
-pub fn push_texture(
-    textured_img: &mut String,
-    luma_value: f32,
-    texture: &[char],
-) -> anyhow::Result<()> {
-    Ok(match luma_value {
-        0.0 => textured_img.push(*texture.get(0).ok_or(Error::msg("could not get texture"))?),
-        0.1 => textured_img.push(*texture.get(1).ok_or(Error::msg("could not get texture"))?),
-        0.2 => textured_img.push(*texture.get(2).ok_or(Error::msg("could not get texture"))?),
-        0.3 => textured_img.push(*texture.get(3).ok_or(Error::msg("could not get texture"))?),
-        0.4 => textured_img.push(*texture.get(4).ok_or(Error::msg("could not get texture"))?),
-        0.5 => textured_img.push(*texture.get(5).ok_or(Error::msg("could not get texture"))?),
-        0.6 => textured_img.push(*texture.get(6).ok_or(Error::msg("could not get texture"))?),
-        0.7 => textured_img.push(*texture.get(7).ok_or(Error::msg("could not get texture"))?),
-        0.8 => textured_img.push(*texture.get(8).ok_or(Error::msg("could not get texture"))?),
-        0.9 => textured_img.push(*texture.get(9).ok_or(Error::msg("could not get texture"))?),
-        _ => (),
-    })
 }

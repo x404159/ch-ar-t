@@ -1,11 +1,16 @@
 use std::{io::Read, path::PathBuf};
 
-use ch_ar_t::AppState;
+use ch_ar_t::{AppState, MIXED_TEXTURE, UNICODE_TEXTURE};
 use clap::*;
 use reqwest::blocking::Client;
 
 fn main() -> anyhow::Result<()> {
-    let Args { url, path } = Args::parse();
+    let Args {
+        url,
+        path,
+        width,
+        texture,
+    } = Args::parse();
     let client = Client::new();
     let image = match (url, path) {
         (Some(url), None) => {
@@ -17,7 +22,14 @@ fn main() -> anyhow::Result<()> {
         _ => std::process::exit(1),
     };
 
-    let app = AppState::new(&image, None)?;
+    let mut app = AppState::new(&image, width)?;
+
+    texture.map(|t| match t {
+        1 => app.set_texture(UNICODE_TEXTURE),
+        2 => app.set_texture(MIXED_TEXTURE),
+        _ => (),
+    });
+
     let img = app.apply_texture()?;
 
     print!("{}", img);
@@ -32,4 +44,10 @@ struct Args {
 
     #[arg(short, long)]
     path: Option<PathBuf>,
+
+    #[arg(short, long)]
+    width: Option<usize>,
+
+    #[arg(short, long)]
+    texture: Option<usize>,
 }
