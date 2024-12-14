@@ -9,11 +9,12 @@ repository = "https://github.com/x404159/ch-ar-t"
 readme = "README.md"
 keywords = ["ascii_art", "image", "graphics"]
 categories = ["command-line-utilities"]
+license = "LICENSE"
 
 [dependencies]
 anyhow = "1.0.86"
 clap = { version = "4.5.9", features = ["derive"] }
-fast_image_resize = "4.1.0"
+fast_image_resize = "5.1.0"
 itertools = "0.13.0"
 reqwest = { version = "0.12.5", features = ["blocking"] }
 term_size = "0.3.2"
