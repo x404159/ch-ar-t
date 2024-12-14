@@ -2,6 +2,13 @@
 name = "ch-ar-t"
 version = "0.1.0"
 edition = "2021"
+authors = ["Abhinav Yadav <abhinavy14@gmail.com>"]
+description = "Image to ASCII art"
+homepage = "https://github.com/x404159/ch-ar-t"
+repository = "https://github.com/x404159/ch-ar-t"
+readme = "README.md"
+keywords = ["ascii_art", "image", "graphics"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 anyhow = "1.0.86"
