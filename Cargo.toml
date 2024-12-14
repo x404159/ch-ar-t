@@ -9,7 +9,7 @@ repository = "https://github.com/x404159/ch-ar-t"
 readme = "README.md"
 keywords = ["ascii_art", "image", "graphics"]
 categories = ["command-line-utilities"]
-license = "LICENSE"
+license = "MIT"
 
 [dependencies]
 anyhow = "1.0.86"
